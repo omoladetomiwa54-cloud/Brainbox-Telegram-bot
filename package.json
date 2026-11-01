@@ -1,8 +1,81 @@
-{
-  "name": "brainbox-telegram-bot",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  }
+import { Telegraf, Markup } from 'telegraf';
+import express from 'express';
+import dotenv from 'dotenv';
+dotenv.config();
+
+const bot = new Telegraf(process.env.BOT_TOKEN);
+const app = express();
+app.use(express.json());
+
+// Simple DB - later change to Mongo
+const users = new Map();
+const activeNumbers = new Map();
+
+// Main Menu from your screenshot
+const mainMenu = Markup.keyboard([
+  ['🚀 GET NUMBERS', '💰 WALLET'],
+  ['🎉 INVITE & EARN', '❓ HELP']
+]).resize();
+
+function numbersKeyboard(numbers) {
+  const rows = numbers.map(n => [ `🇳🇬 📋 ${n}` ]);
+  rows.push(['👉 Next']);
+  rows.push(['👀 Hide country code', '✈️ OTP group']);
+  return Markup.keyboard(rows).resize();
 }
+
+bot.start((ctx) => {
+  if(!users.has(ctx.from.id)) users.set(ctx.from.id, { balance: 0.17 });
+  ctx.reply(`Welcome to BrainBox Number Bot!\n\nBalance: $${users.get(ctx.from.id).balance}\n\nTap 🚀 GET NUMBERS to start`, mainMenu);
+});
+
+bot.hears('🚀 GET NUMBERS', async (ctx) => {
+  const nums = ['+234 7020424853', '+234 7020425636', '+234 7020422077'];
+  nums.forEach(n => activeNumbers.set(n, { userId: ctx.from.id, expires: Date.now()+10*60000 }));
+  
+  await ctx.reply(
+    `🇳🇬 Nigeria Smile KM 43 · 💬 All for all\n`+
+    `⏱ Expires in 10 minutes\n`+
+    `📋 Tap a number to copy it. Codes appear here automatically.\n`+
+    `📩 Waiting for SMS...`,
+    numbersKeyboard(nums)
+  );
+});
+
+// This handles NEW OTP RECEIVED like in your screenshot
+async function sendOTPAlert(userId, fullNumber, otp, orderId = '19513632838') {
+  let u = users.get(userId);
+  if(!u) return;
+  u.balance += 0.01;
+
+  await bot.telegram.sendMessage(userId,
+    `🎉 NEW OTP RECEIVED\n\n`+
+    `⭐ ${orderId} | 🇳🇬 NG\n+2347****${fullNumber.slice(-4)}\n\n`+
+    `💲 0.01 added to your balance\n\n`+
+    `TOTAL BALANCE: 💲 ${u.balance.toFixed(2)}`,
+    Markup.inlineKeyboard([[Markup.button.callback(`🛡️ 📋 ${otp}`, 'copy')]])
+  );
+}
+
+bot.hears('💰 WALLET', (ctx) => {
+  ctx.reply(`TOTAL BALANCE: 💲 ${(users.get(ctx.from.id)?.balance || 0).toFixed(2)}`, mainMenu);
+});
+
+// === WEBHOOK FOR SMS PROVIDER ===
+app.post('/sms-webhook', async (req, res) => {
+  const { number, code } = req.body; // your SIM/provider will POST here
+  console.log('Incoming SMS:', number, code);
+  const data = activeNumbers.get(number);
+  if(data) await sendOTPAlert(data.userId, number, code);
+  res.send('ok');
+});
+
+app.get('/', (req, res) => res.send('BrainBox Bot is running'));
+
+// IMPORTANT FOR WEB SERVICE
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, async () => {
+  console.log(`Server on ${PORT}`);
+  await bot.launch();
+  console.log('Bot started as WEB SERVICE');
+});
